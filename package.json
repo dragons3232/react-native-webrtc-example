@@ -6,6 +6,9 @@
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "start": "react-native start",
+    "dev": "react-native bundle --platform android --dev true --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res/ && cd android && rm -rf app/src/main/res/drawable-* && cd -",
+    "bundle": "react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res/ && cd android && rm -rf app/src/main/res/drawable-* && cd -",
+    "adb": "adb reverse tcp:8081 tcp:8081",
     "test": "jest",
     "lint": "eslint ."
   },
@@ -14,7 +17,8 @@
     "@react-native-firebase/firestore": "^14.5.1",
     "react": "17.0.2",
     "react-native": "0.67.3",
-    "react-native-webrtc": "^1.94.2"
+    "react-native-webrtc": "^1.94.2",
+    "socket.io-client": "^4.5.4"
   },
   "devDependencies": {
     "@babel/core": "^7.12.9",

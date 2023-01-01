@@ -1,4 +1,4 @@
-import React, {useRef} from 'react';
+import React, { useRef } from 'react';
 
 import {
   Button,
@@ -17,15 +17,26 @@ import {
   MediaStream,
   mediaDevices,
 } from 'react-native-webrtc';
-import {useState} from 'react';
+import { useState } from 'react';
 
-import firestore from '@react-native-firebase/firestore';
+import io from 'socket.io-client';
+
+const SignalServer = 'http://192.168.0.187:9000';
+
+export const WSEvent = {
+  connected: 'connected',
+  ready: 'ready',
+  message: 'message',
+  error: 'error',
+  close: 'close',
+}
 
 const App = () => {
   const [remoteStream, setRemoteStream] = useState(null);
   const [webcamStarted, setWebcamStarted] = useState(false);
   const [localStream, setLocalStream] = useState(null);
-  const [channelId, setChannelId] = useState(null);
+  const [userId, setUserId] = useState('long');
+  const [channelId, setChannelId] = useState('LongVideo');
   const pc = useRef();
   const servers = {
     iceServers: [
@@ -40,6 +51,8 @@ const App = () => {
   };
 
   const startWebcam = async () => {
+    connectSocketIO();
+
     pc.current = new RTCPeerConnection(servers);
     const local = await mediaDevices.getUserMedia({
       video: true,
@@ -71,15 +84,10 @@ const App = () => {
   };
 
   const startCall = async () => {
-    const channelDoc = firestore().collection('channels').doc();
-    const offerCandidates = channelDoc.collection('offerCandidates');
-    const answerCandidates = channelDoc.collection('answerCandidates');
-
-    setChannelId(channelDoc.id);
 
     pc.current.onicecandidate = async event => {
       if (event.candidate) {
-        await offerCandidates.add(event.candidate.toJSON());
+        send('ice-candidate', event.candidate);
       }
     };
 
@@ -92,47 +100,16 @@ const App = () => {
       type: offerDescription.type,
     };
 
-    await channelDoc.set({offer});
-
-    // Listen for remote answer
-    channelDoc.onSnapshot(snapshot => {
-      const data = snapshot.data();
-      if (!pc.current.currentRemoteDescription && data?.answer) {
-        const answerDescription = new RTCSessionDescription(data.answer);
-        pc.current.setRemoteDescription(answerDescription);
-      }
-    });
-
-    // When answered, add candidate to peer connection
-    answerCandidates.onSnapshot(snapshot => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === 'added') {
-          const data = change.doc.data();
-          pc.current.addIceCandidate(new RTCIceCandidate(data));
-        }
-      });
-    });
+    send('offer', offer);
   };
 
   const joinCall = async () => {
-    const channelDoc = firestore().collection('channels').doc(channelId);
-    const offerCandidates = channelDoc.collection('offerCandidates');
-    const answerCandidates = channelDoc.collection('answerCandidates');
 
     pc.current.onicecandidate = async event => {
       if (event.candidate) {
-        await answerCandidates.add(event.candidate.toJSON());
+        send('ice-candidate', event.candidate);
       }
     };
-
-    const channelDocument = await channelDoc.get();
-    const channelData = channelDocument.data();
-
-    const offerDescription = channelData.offer;
-
-    await pc.current.setRemoteDescription(
-      new RTCSessionDescription(offerDescription),
-    );
 
     const answerDescription = await pc.current.createAnswer();
     await pc.current.setLocalDescription(answerDescription);
@@ -142,17 +119,63 @@ const App = () => {
       sdp: answerDescription.sdp,
     };
 
-    await channelDoc.update({answer});
-
-    offerCandidates.onSnapshot(snapshot => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === 'added') {
-          const data = change.doc.data();
-          pc.current.addIceCandidate(new RTCIceCandidate(data));
-        }
-      });
-    });
+    send('answer', answer);
   };
+
+  const socketIO = useRef(null);
+
+  const handleConnected = () => {
+    socketIO.current.emit('join', userId);
+  };
+
+  const handleOffer = (data) => {
+    pc.current.setRemoteDescription(
+      new RTCSessionDescription(data),
+    );
+  }
+
+  const handleAnswer = (data) => {
+    const answerDescription = new RTCSessionDescription(data);
+    pc.current.setRemoteDescription(answerDescription);
+  }
+
+  const handleICECandiate = (data) => {
+    pc.current.addIceCandidate(new RTCIceCandidate(data));
+  }
+
+  const handleSignal = message => {
+    try {
+      const data = message;
+      if (data.from == userId) return;
+      switch (data.signal) {
+        case 'offer':
+          return handleOffer(data.message);
+        case 'answer':
+          return handleAnswer(data.message);
+        case 'ice-candidate':
+          return handleICECandiate(data.message);
+      }
+    } catch (e) { }
+  };
+
+  const send = (signal, message) => {
+    if (socketIO?.current) {
+      const data = ({
+        from: userId,
+        to: channelId,
+        signal,
+        message
+      })
+      socketIO.current.emit('message', data)
+    }
+  }
+
+  const connectSocketIO = () => {
+    socketIO.current = io(SignalServer);
+
+    socketIO.current.on(WSEvent.connected, handleConnected);
+    socketIO.current.on(WSEvent.message, handleSignal);
+  }
 
   return (
     <KeyboardAvoidingView style={styles.body} behavior="position">
@@ -176,17 +199,26 @@ const App = () => {
         )}
         <View style={styles.buttons}>
           {!webcamStarted && (
-            <Button title="Start webcam" onPress={startWebcam} />
+            <View>
+              <TextInput
+                value={userId}
+                placeholder="userId"
+                minLength={45}
+                style={{ borderWidth: 1, padding: 5 }}
+                onChangeText={newText => setUserId(newText)}
+              />
+              <Button title="Start webcam" onPress={startWebcam} />
+            </View>
           )}
           {webcamStarted && <Button title="Start call" onPress={startCall} />}
           {webcamStarted && (
-            <View style={{flexDirection: 'row'}}>
+            <View style={{ flexDirection: 'row' }}>
               <Button title="Join call" onPress={joinCall} />
               <TextInput
                 value={channelId}
                 placeholder="callId"
                 minLength={45}
-                style={{borderWidth: 1, padding: 5}}
+                style={{ borderWidth: 1, padding: 5 }}
                 onChangeText={newText => setChannelId(newText)}
               />
             </View>
