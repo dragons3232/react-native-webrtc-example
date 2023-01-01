@@ -36,7 +36,8 @@ const App = () => {
   const [webcamStarted, setWebcamStarted] = useState(false);
   const [localStream, setLocalStream] = useState(null);
   const [userId, setUserId] = useState('long');
-  const [channelId, setChannelId] = useState('LongVideo');
+  const [channelId, setChannelId] = useState('');
+  const [incoming, setIncoming] = useState(false);
   const pc = useRef();
   const servers = {
     iceServers: [
@@ -149,6 +150,8 @@ const App = () => {
       if (data.from == userId) return;
       switch (data.signal) {
         case 'offer':
+          setIncoming(true);
+          setChannelId(data.from);
           return handleOffer(data.message);
         case 'answer':
           return handleAnswer(data.message);
@@ -210,10 +213,9 @@ const App = () => {
               <Button title="Start webcam" onPress={startWebcam} />
             </View>
           )}
-          {webcamStarted && <Button title="Start call" onPress={startCall} />}
           {webcamStarted && (
             <View style={{ flexDirection: 'row' }}>
-              <Button title="Join call" onPress={joinCall} />
+              <Button title="Start call" onPress={startCall} />
               <TextInput
                 value={channelId}
                 placeholder="callId"
@@ -222,6 +224,9 @@ const App = () => {
                 onChangeText={newText => setChannelId(newText)}
               />
             </View>
+          )}
+          {webcamStarted && incoming && (
+            <Button title="Join call" onPress={joinCall} />
           )}
         </View>
       </SafeAreaView>
